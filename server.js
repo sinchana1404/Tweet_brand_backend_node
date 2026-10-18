@@ -6,21 +6,38 @@ const { GoogleGenAI } = require("@google/genai");
 
 const app = express();
 
+const PORT = process.env.PORT || 5000;
+const MODEL = process.env.GEMINI_MODEL || "gemini-3.8-flash";
+
+// Allowed frontend origins
+const allowedOrigins = [
+  "http://localhost:5173",
+  process.env.FRONTEND_URL,
+].filter(Boolean);
+
 app.use(
   cors({
-    origin: process.env.FRONTEND_URL || "http://localhost:5173",
+    origin: (origin, callback) => {
+      // Allow requests without an Origin header, such as Postman
+      if (!origin || allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+
+      return callback(new Error(`CORS blocked origin: ${origin}`));
+    },
   })
 );
 
 app.use(express.json());
 
+// Gemini API configuration
+if (!process.env.GEMINI_API_KEY) {
+  console.error("GEMINI_API_KEY is missing from environment variables.");
+}
+
 const ai = new GoogleGenAI({
   apiKey: process.env.GEMINI_API_KEY,
 });
-
-const MODEL = process.env.GEMINI_MODEL || "gemini-3.8-flash";
-
-const PORT = process.env.PORT || 5000;
 
 // Health check
 app.get("/api/health", (req, res) => {
@@ -54,14 +71,14 @@ TASK
 3. Identify the campaign tone and explain it.
 4. Identify the target audience.
 5. Describe the communication style.
-6. Generate exactly 10 distinct, engaging tweets suitable for X.
+6. Generate exactly 10 distinct tweets suitable for X.
 
 RULES
 - Keep tweets concise and engaging.
-- Align every tweet with the campaign objective.
+- Align tweets with the campaign objective.
 - Do not invent product features, statistics, or claims.
 - Avoid repetitive ideas.
-- Return ONLY valid JSON in this exact structure:
+- Return ONLY valid JSON in this structure:
 
 {
   "brandVoice": ["Trait 1", "Trait 2", "Trait 3", "Trait 4"],
@@ -130,7 +147,7 @@ RULES
     }
 
     return res.status(500).json({
-      error: "Tweet generation failed. Check the backend terminal.",
+      error: "Tweet generation failed. Check the backend logs.",
     });
   }
 });
@@ -159,7 +176,8 @@ app.post("/api/tweets/regenerate", async (req, res) => {
     existingTweets.length !== 10 ||
     !Number.isInteger(tweetIndex) ||
     tweetIndex < 0 ||
-    tweetIndex >= 10
+    tweetIndex >= 10 ||
+    !existingTweets.every((tweet) => typeof tweet === "string")
   ) {
     return res.status(400).json({
       error: "Invalid campaign details or tweet selection.",
@@ -188,8 +206,8 @@ Communication style: ${communicationStyle || "Not specified"}
 CURRENT TWEETS
 ${existingTweets
   .map(
-    (tweet, i) =>
-      `${i + 1}${i === tweetIndex ? " (REPLACE THIS TWEET)" : ""}: ${tweet}`
+    (tweet, index) =>
+      `${index + 1}${index === tweetIndex ? " (REPLACE THIS TWEET)" : ""}: ${tweet}`
   )
   .join("\n")}
 
@@ -198,12 +216,12 @@ Replace only tweet number ${tweetIndex + 1}.
 
 RULES
 - Return one new tweet, not a list.
-- Preserve the existing brand voice and campaign strategy.
+- Preserve the brand voice and campaign strategy.
 - Make it different from the other nine tweets.
 - Do not repeat the original selected tweet.
 - Do not invent product claims.
 - Keep it concise and suitable for X.
-- Return ONLY valid JSON in this exact format:
+- Return ONLY valid JSON:
 {"tweet": "Your replacement tweet"}
 `;
 
@@ -227,7 +245,6 @@ RULES
     const isDuplicate = existingTweets.some(
       (tweet, index) =>
         index !== tweetIndex &&
-        typeof tweet === "string" &&
         tweet.trim().toLowerCase() === replacement.toLowerCase()
     );
 
@@ -254,12 +271,12 @@ RULES
     }
 
     return res.status(500).json({
-      error: "Tweet regeneration failed. Check the backend terminal.",
+      error: "Tweet regeneration failed. Check the backend logs.",
     });
   }
 });
 
-// Start server — keep this at the bottom
+// Start server for local development
 app.listen(PORT, () => {
-  console.log(`Backend running on http://localhost:${PORT}`);
+  console.log(`Backend running on port ${PORT}`);
 });
