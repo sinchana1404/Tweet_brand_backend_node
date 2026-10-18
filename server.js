@@ -1,3 +1,4 @@
+
 require("dotenv").config();
 
 const express = require("express");
@@ -9,30 +10,26 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 const MODEL = process.env.GEMINI_MODEL || "gemini-3.8-flash";
 
-// Allowed frontend origins
+// CORS configuration
 const allowedOrigins = [
   "http://localhost:5173",
+  "https://tweet-brand-backend-node-y8iu.vercel.app",
   process.env.FRONTEND_URL,
 ].filter(Boolean);
 
 app.use(
   cors({
-    origin: (origin, callback) => {
-      // Allow requests without an Origin header, such as Postman
-      if (!origin || allowedOrigins.includes(origin)) {
-        return callback(null, true);
-      }
-
-      return callback(new Error(`CORS blocked origin: ${origin}`));
-    },
+    origin: allowedOrigins,
+    methods: ["GET", "POST", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
   })
 );
 
 app.use(express.json());
 
-// Gemini API configuration
+// Gemini configuration
 if (!process.env.GEMINI_API_KEY) {
-  console.error("GEMINI_API_KEY is missing from environment variables.");
+  console.error("GEMINI_API_KEY is missing.");
 }
 
 const ai = new GoogleGenAI({
@@ -44,11 +41,15 @@ app.get("/api/health", (req, res) => {
   res.json({ message: "Backend is running!" });
 });
 
-// Generate 10 tweets and analyze brand voice
+// Generate 10 tweets
 app.post("/api/tweets/generate", async (req, res) => {
   const { brandName, industry, objective, productDetails } = req.body;
 
-  if (!objective || !productDetails?.trim()) {
+  if (
+    !objective ||
+    typeof productDetails !== "string" ||
+    !productDetails.trim()
+  ) {
     return res.status(400).json({
       error: "Campaign objective and product details are required.",
     });
@@ -57,12 +58,12 @@ app.post("/api/tweets/generate", async (req, res) => {
   const prompt = `
 You are an expert brand strategist and social media copywriter.
 
-Analyze the brand and generate exactly 10 unique tweets.
+Analyze this brand and generate exactly 10 unique tweets.
 
 BRAND DETAILS
-Brand name: ${brandName || "Not specified"}
+Brand: ${brandName || "Not specified"}
 Industry: ${industry || "Not specified"}
-Campaign objective: ${objective}
+Objective: ${objective}
 Product details: ${productDetails}
 
 TASK
@@ -88,16 +89,8 @@ RULES
   "targetAudience": "Target audience",
   "communicationStyle": "Communication style",
   "tweets": [
-    "Tweet 1",
-    "Tweet 2",
-    "Tweet 3",
-    "Tweet 4",
-    "Tweet 5",
-    "Tweet 6",
-    "Tweet 7",
-    "Tweet 8",
-    "Tweet 9",
-    "Tweet 10"
+    "Tweet 1", "Tweet 2", "Tweet 3", "Tweet 4", "Tweet 5",
+    "Tweet 6", "Tweet 7", "Tweet 8", "Tweet 9", "Tweet 10"
   ]
 }
 `;
@@ -106,9 +99,7 @@ RULES
     const response = await ai.models.generateContent({
       model: MODEL,
       contents: prompt,
-      config: {
-        responseMimeType: "application/json",
-      },
+      config: { responseMimeType: "application/json" },
     });
 
     const result = JSON.parse(response.text);
@@ -127,7 +118,7 @@ RULES
         (tweet) => typeof tweet === "string" && tweet.trim()
       )
     ) {
-      throw new Error("The AI returned an invalid response structure.");
+      throw new Error("Invalid AI response structure.");
     }
 
     return res.json(result);
@@ -147,12 +138,12 @@ RULES
     }
 
     return res.status(500).json({
-      error: "Tweet generation failed. Check the backend logs.",
+      error: "Tweet generation failed. Check backend logs.",
     });
   }
 });
 
-// Regenerate one selected tweet
+// Regenerate one tweet
 app.post("/api/tweets/regenerate", async (req, res) => {
   const {
     brandName,
@@ -171,13 +162,14 @@ app.post("/api/tweets/regenerate", async (req, res) => {
 
   if (
     !objective ||
-    !productDetails?.trim() ||
+    typeof productDetails !== "string" ||
+    !productDetails.trim() ||
     !Array.isArray(existingTweets) ||
     existingTweets.length !== 10 ||
+    !existingTweets.every((tweet) => typeof tweet === "string") ||
     !Number.isInteger(tweetIndex) ||
     tweetIndex < 0 ||
-    tweetIndex >= 10 ||
-    !existingTweets.every((tweet) => typeof tweet === "string")
+    tweetIndex >= 10
   ) {
     return res.status(400).json({
       error: "Invalid campaign details or tweet selection.",
@@ -187,7 +179,7 @@ app.post("/api/tweets/regenerate", async (req, res) => {
   const prompt = `
 You are an expert brand strategist and social media copywriter.
 
-Generate ONE replacement tweet for an existing campaign.
+Generate ONE replacement tweet.
 
 CAMPAIGN DETAILS
 Brand: ${brandName || "Not specified"}
@@ -196,7 +188,7 @@ Objective: ${objective}
 Product details: ${productDetails}
 
 BRAND STRATEGY
-Brand voice traits: ${JSON.stringify(brandVoice || [])}
+Brand voice: ${JSON.stringify(brandVoice || [])}
 Brand voice summary: ${brandVoiceSummary || "Not specified"}
 Campaign tone: ${brandTone || "Not specified"}
 Tone explanation: ${toneExplanation || "Not specified"}
@@ -207,48 +199,39 @@ CURRENT TWEETS
 ${existingTweets
   .map(
     (tweet, index) =>
-      `${index + 1}${index === tweetIndex ? " (REPLACE THIS TWEET)" : ""}: ${tweet}`
+      `${index + 1}${index === tweetIndex ? " (REPLACE THIS)" : ""}: ${tweet}`
   )
   .join("\n")}
 
-TASK
-Replace only tweet number ${tweetIndex + 1}.
-
-RULES
-- Return one new tweet, not a list.
-- Preserve the brand voice and campaign strategy.
-- Make it different from the other nine tweets.
-- Do not repeat the original selected tweet.
-- Do not invent product claims.
-- Keep it concise and suitable for X.
-- Return ONLY valid JSON:
-{"tweet": "Your replacement tweet"}
+Replace only tweet ${tweetIndex + 1}.
+Preserve the brand strategy. Do not invent product claims.
+Make the new tweet different from the other nine.
+Return ONLY valid JSON:
+{"tweet":"Your replacement tweet"}
 `;
 
   try {
     const response = await ai.models.generateContent({
       model: MODEL,
       contents: prompt,
-      config: {
-        responseMimeType: "application/json",
-      },
+      config: { responseMimeType: "application/json" },
     });
 
     const result = JSON.parse(response.text);
 
     if (typeof result.tweet !== "string" || !result.tweet.trim()) {
-      throw new Error("The AI returned an invalid replacement tweet.");
+      throw new Error("Invalid replacement tweet.");
     }
 
     const replacement = result.tweet.trim();
 
-    const isDuplicate = existingTweets.some(
+    const duplicate = existingTweets.some(
       (tweet, index) =>
         index !== tweetIndex &&
         tweet.trim().toLowerCase() === replacement.toLowerCase()
     );
 
-    if (isDuplicate) {
+    if (duplicate) {
       return res.status(502).json({
         error: "The AI returned a duplicate tweet. Please try again.",
       });
@@ -271,12 +254,12 @@ RULES
     }
 
     return res.status(500).json({
-      error: "Tweet regeneration failed. Check the backend logs.",
+      error: "Tweet regeneration failed. Check backend logs.",
     });
   }
 });
 
-// Start server for local development
+// Local development
 app.listen(PORT, () => {
   console.log(`Backend running on port ${PORT}`);
 });
